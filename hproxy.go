@@ -66,9 +66,8 @@ func loadConfig() Config {
 func logError(r *http.Request, message string) {
     clientIp := r.Header.Get("cf-connecting-ip")
     userAgent := r.Header.Get("user-agent")
-    clientRegion := r.Header.Get("cf-ipcountry")
     url := r.URL.String()
-    log.Printf("%s, clientIp: %s, user-agent: %s, clientRegion: %s, url: %s", message, clientIp, userAgent, clientRegion, url)
+    log.Printf("%s, clientIp: %s, user-agent: %s, url: %s", message, clientIp, userAgent, url)
 }
 
 func createNewRequest(r *http.Request, url, proxyHostname, originHostname string) (*http.Request, error) {
@@ -126,55 +125,25 @@ func handler(w http.ResponseWriter, r *http.Request) {
     clientRegion := r.Header.Get("cf-ipcountry")
 
     // 请求验证
-    if proxyHostname == "" {
-        logError(r, "Invalid request by PROXY_HOSTNAME")
-        http.Error(w, "Invalid request", http.StatusForbidden)
+    if proxyHostname == "" || 
+        (config.PathnameRegex != "" && !regexp.MustCompile(config.PathnameRegex).MatchString(url.Path)) ||
+        (config.UAWhitelistRegex != "" && !regexp.MustCompile(config.UAWhitelistRegex).MatchString(strings.ToLower(r.Header.Get("user-agent")))) ||
+        (config.UABlacklistRegex != "" && regexp.MustCompile(config.UABlacklistRegex).MatchString(strings.ToLower(r.Header.Get("user-agent")))) ||
+        (clientIP != "" && config.IPWhitelistRegex != "" && !regexp.MustCompile(config.IPWhitelistRegex).MatchString(clientIP)) ||
+        (clientIP != "" && config.IPBlacklistRegex != "" && regexp.MustCompile(config.IPBlacklistRegex).MatchString(clientIP)) ||
+        (clientRegion != "" && config.RegionWhitelistRegex != "" && !regexp.MustCompile(config.RegionWhitelistRegex).MatchString(clientRegion)) ||
+        (clientRegion != "" && config.RegionBlacklistRegex != "" && regexp.MustCompile(config.RegionBlacklistRegex).MatchString(clientRegion)) {
+        
+        logError(r, "Invalid request")
+        if config.URL302 != "" {
+            http.Redirect(w, r, config.URL302, http.StatusFound)
+            return
+        }
+        w.WriteHeader(http.StatusInternalServerError)
+        w.Header().Set("Content-Type", "text/html; charset=utf-8")
+        w.Write([]byte(nginx()))
         return
     }
-    if config.PathnameRegex != "" && !regexp.MustCompile(config.PathnameRegex).MatchString(url.Path) {
-        logError(r, "Invalid request by PATHNAME_REGEX")
-        http.Error(w, "Invalid request", http.StatusForbidden)
-        return
-    }
-    if config.UAWhitelistRegex != "" && !regexp.MustCompile(config.UAWhitelistRegex).MatchString(strings.ToLower(r.Header.Get("user-agent"))) {
-        logError(r, "Invalid request by UA_WHITELIST_REGEX")
-        http.Error(w, "Invalid request", http.StatusForbidden)
-        return
-    }
-    if config.UABlacklistRegex != "" && regexp.MustCompile(config.UABlacklistRegex).MatchString(strings.ToLower(r.Header.Get("user-agent"))) {
-        logError(r, "Invalid request by UA_BLACKLIST_REGEX")
-        http.Error(w, "Invalid request", http.StatusForbidden)
-        return
-    }
-    if clientIP != "" && config.IPWhitelistRegex != "" && !regexp.MustCompile(config.IPWhitelistRegex).MatchString(clientIP) {
-        logError(r, "Invalid request by IP_WHITELIST_REGEX")
-        http.Error(w, "Invalid request", http.StatusForbidden)
-        return
-    }
-    if clientIP != "" && config.IPBlacklistRegex != "" && regexp.MustCompile(config.IPBlacklistRegex).MatchString(clientIP) {
-        logError(r, "Invalid request by IP_BLACKLIST_REGEX")
-        http.Error(w, "Invalid request", http.StatusForbidden)
-        return
-    }
-    if clientRegion != "" && config.RegionWhitelistRegex != "" && !regexp.MustCompile(config.RegionWhitelistRegex).MatchString(clientRegion) {
-        logError(r, "Invalid request by REGION_WHITELIST_REGEX")
-        http.Error(w, "Invalid request", http.StatusForbidden)
-        return
-    }
-    if clientRegion != "" && config.RegionBlacklistRegex != "" && regexp.MustCompile(config.RegionBlacklistRegex).MatchString(clientRegion) {
-        logError(r, "Invalid request by REGION_BLACKLIST_REGEX")
-        http.Error(w, "Invalid request", http.StatusForbidden)
-        return
-    }
-    if config.URL302 != "" {
-        http.Redirect(w, r, config.URL302, http.StatusFound)
-        return
-    }
-    w.WriteHeader(http.StatusInternalServerError)
-    w.Header().Set("Content-Type", "text/html; charset=utf-8")
-    w.Write([]byte(nginx()))
-    return
-
     url.Host = proxyHostname
     url.Scheme = config.ProxyProtocol
     newRequest, err := createNewRequest(r, url.String(), proxyHostname, originHostname)
