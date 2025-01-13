@@ -21,10 +21,10 @@ jobs:
     - name: Build Binary
       run: |
         mkdir -p build
-        GOOS=linux GOARCH=amd64 go build -o build/alist-proxy alist-proxy.go
+        GOOS=linux GOARCH=amd64 go build -o build/hproxy hproxy.go
 
     - name: Upload Binary
       uses: actions/upload-artifact@v3
       with:
-        name: alist-proxy-linux-amd64
-        path: build/alist-proxy
+        name: hproxy-linux-amd64
+        path: build/hproxy
