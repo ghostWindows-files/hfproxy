@@ -66,9 +66,8 @@ func loadConfig() Config {
 func logError(r *http.Request, message string) {
     clientIp := r.Header.Get("cf-connecting-ip")
     userAgent := r.Header.Get("user-agent")
-    clientRegion := r.Header.Get("cf-ipcountry")
     url := r.URL.String()
-    log.Printf("%s, clientIp: %s, user-agent: %s, clientRegion: %s, url: %s", message, clientIp, userAgent, clientRegion, url)
+    log.Printf("%s, clientIp: %s, user-agent: %s, url: %s", message, clientIp, userAgent, url)
 }
 
 func createNewRequest(r *http.Request, url, proxyHostname, originHostname string) (*http.Request, error) {
@@ -82,7 +81,6 @@ func createNewRequest(r *http.Request, url, proxyHostname, originHostname string
             newRequest.Header[k][i] = strings.Replace(v[i], originHostname, proxyHostname, -1)
         }
     }
-    newRequest.Header.Del("Connection")  // 删除 Connection 头部
     return newRequest, nil
 }
 
@@ -188,7 +186,6 @@ func handler(w http.ResponseWriter, r *http.Request) {
     w.WriteHeader(originalResponse.StatusCode)
     w.Write([]byte(body))
 }
-
 
 func nginx() string {
     return `<!DOCTYPE html>
