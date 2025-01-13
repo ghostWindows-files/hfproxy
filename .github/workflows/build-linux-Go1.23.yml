@@ -20,6 +20,7 @@ jobs:
     - name: Build Binary
       run: |
         mkdir -p build
+        go get github.com/joho/godotenv
         GOOS=linux GOARCH=amd64 go build -o build/hproxy hproxy.go
 
     - name: Upload Binary
