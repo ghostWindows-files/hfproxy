@@ -120,15 +120,19 @@ func handler(w http.ResponseWriter, r *http.Request) {
     originHostname := url.Hostname()
     proxyHostname := config.ProxyHostname
 
+    // 获取请求头中的IP和地区信息
+    clientIP := r.Header.Get("cf-connecting-ip")
+    clientRegion := r.Header.Get("cf-ipcountry")
+
     // 请求验证
     if proxyHostname == "" || 
         (config.PathnameRegex != "" && !regexp.MustCompile(config.PathnameRegex).MatchString(url.Path)) ||
         (config.UAWhitelistRegex != "" && !regexp.MustCompile(config.UAWhitelistRegex).MatchString(strings.ToLower(r.Header.Get("user-agent")))) ||
         (config.UABlacklistRegex != "" && regexp.MustCompile(config.UABlacklistRegex).MatchString(strings.ToLower(r.Header.Get("user-agent")))) ||
-        (config.IPWhitelistRegex != "" && !regexp.MustCompile(config.IPWhitelistRegex).MatchString(r.Header.Get("cf-connecting-ip"))) ||
-        (config.IPBlacklistRegex != "" && regexp.MustCompile(config.IPBlacklistRegex).MatchString(r.Header.Get("cf-connecting-ip"))) ||
-        (config.RegionWhitelistRegex != "" && !regexp.MustCompile(config.RegionWhitelistRegex).MatchString(r.Header.Get("cf-ipcountry"))) ||
-        (config.RegionBlacklistRegex != "" && regexp.MustCompile(config.RegionBlacklistRegex).MatchString(r.Header.Get("cf-ipcountry"))) {
+        (clientIP != "" && config.IPWhitelistRegex != "" && !regexp.MustCompile(config.IPWhitelistRegex).MatchString(clientIP)) ||
+        (clientIP != "" && config.IPBlacklistRegex != "" && regexp.MustCompile(config.IPBlacklistRegex).MatchString(clientIP)) ||
+        (clientRegion != "" && config.RegionWhitelistRegex != "" && !regexp.MustCompile(config.RegionWhitelistRegex).MatchString(clientRegion)) ||
+        (clientRegion != "" && config.RegionBlacklistRegex != "" && regexp.MustCompile(config.RegionBlacklistRegex).MatchString(clientRegion)) {
         
         logError(r, "Invalid request")
         if config.URL302 != "" {
