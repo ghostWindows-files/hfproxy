@@ -1,7 +1,7 @@
 package main
 
 import (
-    "bufio"
+    "encoding/json"
     "io/ioutil"
     "log"
     "net/http"
@@ -11,52 +11,52 @@ import (
     "github.com/joho/godotenv"
 )
 
-// 读取 proxyconfig.conf 文件配置
-func loadConfig() map[string]string {
-    config := make(map[string]string)
+// 配置结构体
+type Config struct {
+    ProxyHostname       string `json:"PROXY_HOSTNAME"`
+    ProxyProtocol       string `json:"PROXY_PROTOCOL"`
+    PathnameRegex       string `json:"PATHNAME_REGEX"`
+    UAWhitelistRegex    string `json:"UA_WHITELIST_REGEX"`
+    UABlacklistRegex    string `json:"UA_BLACKLIST_REGEX"`
+    IPWhitelistRegex    string `json:"IP_WHITELIST_REGEX"`
+    IPBlacklistRegex    string `json:"IP_BLACKLIST_REGEX"`
+    RegionWhitelistRegex string `json:"REGION_WHITELIST_REGEX"`
+    RegionBlacklistRegex string `json:"REGION_BLACKLIST_REGEX"`
+    URL302              string `json:"URL302"`
+    Debug               string `json:"DEBUG"`
+}
 
-    file, err := os.Open("proxyconfig.conf")
+// 读取 proxyconfig.json 文件配置
+func loadConfig() Config {
+    var config Config
+
+    file, err := os.Open("proxyconfig.json")
     if err != nil {
-        log.Println("proxyconfig.conf 文件不存在，尝试加载 .env 文件")
+        log.Println("proxyconfig.json 文件不存在，尝试加载 .env 文件")
         err = godotenv.Load(".env")
         if err != nil {
             log.Fatal("Error loading .env file")
         }
 
-        config["PROXY_HOSTNAME"] = os.Getenv("PROXY_HOSTNAME")
-        config["PROXY_PROTOCOL"] = os.Getenv("PROXY_PROTOCOL")
-        config["PATHNAME_REGEX"] = os.Getenv("PATHNAME_REGEX")
-        config["UA_WHITELIST_REGEX"] = os.Getenv("UA_WHITELIST_REGEX")
-        config["UA_BLACKLIST_REGEX"] = os.Getenv("UA_BLACKLIST_REGEX")
-        config["IP_WHITELIST_REGEX"] = os.Getenv("IP_WHITELIST_REGEX")
-        config["IP_BLACKLIST_REGEX"] = os.Getenv("IP_BLACKLIST_REGEX")
-        config["REGION_WHITELIST_REGEX"] = os.Getenv("REGION_WHITELIST_REGEX")
-        config["REGION_BLACKLIST_REGEX"] = os.Getenv("REGION_BLACKLIST_REGEX")
-        config["URL302"] = os.Getenv("URL302")
-        config["DEBUG"] = os.Getenv("DEBUG")
+        config.ProxyHostname = os.Getenv("PROXY_HOSTNAME")
+        config.ProxyProtocol = os.Getenv("PROXY_PROTOCOL")
+        config.PathnameRegex = os.Getenv("PATHNAME_REGEX")
+        config.UAWhitelistRegex = os.Getenv("UA_WHITELIST_REGEX")
+        config.UABlacklistRegex = os.Getenv("UA_BLACKLIST_REGEX")
+        config.IPWhitelistRegex = os.Getenv("IP_WHITELIST_REGEX")
+        config.IPBlacklistRegex = os.Getenv("IP_BLACKLIST_REGEX")
+        config.RegionWhitelistRegex = os.Getenv("REGION_WHITELIST_REGEX")
+        config.RegionBlacklistRegex = os.Getenv("REGION_BLACKLIST_REGEX")
+        config.URL302 = os.Getenv("URL302")
+        config.Debug = os.Getenv("DEBUG")
     } else {
         defer file.Close()
 
-        // 从 proxyconfig.conf 文件中读取配置
-        scanner := bufio.NewScanner(file)
-        for scanner.Scan() {
-            line := scanner.Text()
-
-            // 检查是否存在多个配置项在同一行
-            keyValuePairs := strings.Split(line, ";")
-            for _, keyValue := range keyValuePairs {
-                if strings.TrimSpace(keyValue) == "" || strings.HasPrefix(keyValue, "#") {
-                    continue
-                }
-                parts := strings.SplitN(keyValue, "=", 2)
-                if len(parts) != 2 {
-                    continue
-                }
-                config[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
-            }
-        }
-        if err := scanner.Err(); err != nil {
-            log.Fatal(err)
+        // 从 proxyconfig.json 文件中读取配置
+        byteValue, _ := ioutil.ReadAll(file)
+        err = json.Unmarshal(byteValue, &config)
+        if err != nil {
+            log.Fatal("Error parsing proxyconfig.json file:", err)
         }
     }
 
@@ -93,7 +93,6 @@ func setResponseHeaders(originalResponse *http.Response, proxyHostname, originHo
     }
     if debug {
         newResponseHeaders.Del("content-security-policy")
-        // 可以进一步增加其他调试功能
     }
     return newResponseHeaders
 }
@@ -119,21 +118,21 @@ func handler(w http.ResponseWriter, r *http.Request) {
     config := loadConfig()
     url := r.URL
     originHostname := url.Hostname()
-    proxyHostname := config["PROXY_HOSTNAME"]
+    proxyHostname := config.ProxyHostname
 
     // 请求验证
     if proxyHostname == "" || 
-        !regexp.MustCompile(config["PATHNAME_REGEX"]).MatchString(url.Path) ||
-        !regexp.MustCompile(config["UA_WHITELIST_REGEX"]).MatchString(strings.ToLower(r.Header.Get("user-agent"))) ||
-        regexp.MustCompile(config["UA_BLACKLIST_REGEX"]).MatchString(strings.ToLower(r.Header.Get("user-agent"))) ||
-        !regexp.MustCompile(config["IP_WHITELIST_REGEX"]).MatchString(r.Header.Get("cf-connecting-ip")) ||
-        regexp.MustCompile(config["IP_BLACKLIST_REGEX"]).MatchString(r.Header.Get("cf-connecting-ip")) ||
-        !regexp.MustCompile(config["REGION_WHITELIST_REGEX"]).MatchString(r.Header.Get("cf-ipcountry")) ||
-        regexp.MustCompile(config["REGION_BLACKLIST_REGEX"]).MatchString(r.Header.Get("cf-ipcountry")) {
+        (config.PathnameRegex != "" && !regexp.MustCompile(config.PathnameRegex).MatchString(url.Path)) ||
+        (config.UAWhitelistRegex != "" && !regexp.MustCompile(config.UAWhitelistRegex).MatchString(strings.ToLower(r.Header.Get("user-agent")))) ||
+        (config.UABlacklistRegex != "" && regexp.MustCompile(config.UABlacklistRegex).MatchString(strings.ToLower(r.Header.Get("user-agent")))) ||
+        (config.IPWhitelistRegex != "" && !regexp.MustCompile(config.IPWhitelistRegex).MatchString(r.Header.Get("cf-connecting-ip"))) ||
+        (config.IPBlacklistRegex != "" && regexp.MustCompile(config.IPBlacklistRegex).MatchString(r.Header.Get("cf-connecting-ip"))) ||
+        (config.RegionWhitelistRegex != "" && !regexp.MustCompile(config.RegionWhitelistRegex).MatchString(r.Header.Get("cf-ipcountry"))) ||
+        (config.RegionBlacklistRegex != "" && regexp.MustCompile(config.RegionBlacklistRegex).MatchString(r.Header.Get("cf-ipcountry"))) {
         
         logError(r, "Invalid request")
-        if config["URL302"] != "" {
-            http.Redirect(w, r, config["URL302"], http.StatusFound)
+        if config.URL302 != "" {
+            http.Redirect(w, r, config.URL302, http.StatusFound)
             return
         }
         w.WriteHeader(http.StatusInternalServerError)
@@ -142,7 +141,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
         return
     }
     url.Host = proxyHostname
-    url.Scheme = config["PROXY_PROTOCOL"]
+    url.Scheme = config.ProxyProtocol
     newRequest, err := createNewRequest(r, url.String(), proxyHostname, originHostname)
     if err != nil {
         logError(r, "Create new request failed")
@@ -156,7 +155,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
         return
     }
     defer originalResponse.Body.Close()
-    newResponseHeaders := setResponseHeaders(originalResponse, proxyHostname, originHostname, config["DEBUG"] == "true")
+    newResponseHeaders := setResponseHeaders(originalResponse, proxyHostname, originHostname, config.Debug == "true")
     for k, v := range newResponseHeaders {
         for _, v2 := range v {
             w.Header().Add(k, v2)
@@ -165,7 +164,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
     contentType := newResponseHeaders.Get("content-type")
     var body string
     if strings.Contains(contentType, "text/") {
-        body, err = replaceResponseText(originalResponse, proxyHostname, config["PATHNAME_REGEX"], originHostname)
+        body, err = replaceResponseText(originalResponse, proxyHostname, config.PathnameRegex, originHostname)
         if err != nil {
             logError(r, "Replace response text error")
             http.Error(w, "Internal Server Error", http.StatusInternalServerError)
