@@ -70,27 +70,17 @@ func logError(r *http.Request, message string) {
     log.Printf("%s, clientIp: %s, user-agent: %s, url: %s", message, clientIp, userAgent, url)
 }
 
-func createNewRequest(r *http.Request, url, proxyHostname, originHostname string) (*http.Request, error) {
+func createNewRequest(r *http.Request, url string) (*http.Request, error) {
     newRequest, err := http.NewRequest(r.Method, url, r.Body)
     if err != nil {
         return nil, err
     }
-    newRequest.Header = r.Header.Clone()
-    for k, v := range newRequest.Header {
-        for i := range v {
-            newRequest.Header[k][i] = strings.Replace(v[i], originHostname, proxyHostname, -1)
-        }
-    }
+    newRequest.Header = r.Header.Clone()  // 只克隆原请求头，不进行任何修改
     return newRequest, nil
 }
 
-func setResponseHeaders(originalResponse *http.Response, proxyHostname, originHostname string, debug bool) http.Header {
-    newResponseHeaders := originalResponse.Header.Clone()
-    for k, v := range newResponseHeaders {
-        for i := range v {
-            newResponseHeaders[k][i] = strings.Replace(v[i], proxyHostname, originHostname, -1)
-        }
-    }
+func setResponseHeaders(originalResponse *http.Response, debug bool) http.Header {
+    newResponseHeaders := originalResponse.Header.Clone()  // 只克隆原响应头，不进行任何修改
     if debug {
         newResponseHeaders.Del("content-security-policy")
     }
@@ -144,14 +134,17 @@ func handler(w http.ResponseWriter, r *http.Request) {
         w.Write([]byte(nginx()))
         return
     }
+    
+    // 只改变 URL 的 Host 和 Scheme，不再替换请求头
     url.Host = proxyHostname
     url.Scheme = config.ProxyProtocol
-    newRequest, err := createNewRequest(r, url.String(), proxyHostname, originHostname)
+    newRequest, err := createNewRequest(r, url.String())
     if err != nil {
         logError(r, "Create new request failed")
         http.Error(w, "Internal Server Error", http.StatusInternalServerError)
         return
     }
+    
     originalResponse, err := http.DefaultClient.Do(newRequest)
     if err != nil {
         logError(r, "Fetch error: " + err.Error())
@@ -159,12 +152,15 @@ func handler(w http.ResponseWriter, r *http.Request) {
         return
     }
     defer originalResponse.Body.Close()
-    newResponseHeaders := setResponseHeaders(originalResponse, proxyHostname, originHostname, config.Debug == "true")
+    
+    // 设置响应头，不再替换
+    newResponseHeaders := setResponseHeaders(originalResponse, config.Debug == "true")
     for k, v := range newResponseHeaders {
         for _, v2 := range v {
             w.Header().Add(k, v2)
         }
     }
+
     contentType := newResponseHeaders.Get("content-type")
     var body string
     if strings.Contains(contentType, "text/") {
@@ -183,6 +179,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
         }
         body = string(bodyBytes)
     }
+
     w.WriteHeader(originalResponse.StatusCode)
     w.Write([]byte(body))
 }
