@@ -25,5 +25,5 @@ jobs:
     - name: Upload Binary
       uses: actions/upload-artifact@v3
       with:
-        name: alist-proxy-linux-amd64
+        name: hproxy-linux-amd64
         path: build/hproxy
