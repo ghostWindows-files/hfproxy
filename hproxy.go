@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"regexp"
@@ -64,11 +65,10 @@ func loadConfig() Config {
 	return config
 }
 
-func logError(r *http.Request, message string) {
-	clientIp := r.Header.Get("cf-connecting-ip")
+func logError(r *http.Request, message string, clientIP string) {
 	userAgent := r.Header.Get("user-agent")
 	url := r.URL.String()
-	log.Printf("%s, clientIp: %s, user-agent: %s, url: %s", message, clientIp, userAgent, url)
+	log.Printf("%s, clientIp: %s, user-agent: %s, url: %s", message, clientIP, userAgent, url)
 }
 
 // isFilteredHeader 检查是否是需要过滤的头部
@@ -88,7 +88,7 @@ func isFilteredHeader(key string) bool {
 	return false
 }
 
-func createNewRequest(r *http.Request, url, proxyHostname, originHostname string) (*http.Request, error) {
+func createNewRequest(r *http.Request, url, proxyHostname string) (*http.Request, error) {
 	newRequest, err := http.NewRequest(r.Method, url, r.Body)
 	if err != nil {
 		return nil, err
@@ -105,24 +105,19 @@ func createNewRequest(r *http.Request, url, proxyHostname, originHostname string
 		}
 	}
 	newRequest.Header = filteredHeaders
-
-    // 替换请求头中的主机名
-    for k, v := range newRequest.Header {
-        for i := range v {
-            newRequest.Header[k][i] = strings.Replace(v[i], originHostname, proxyHostname, -1)
-        }
-    }
+	//newRequest.Host = proxyHostname // 不需要修改 Host 头部
 
 	return newRequest, nil
 }
 
 func setResponseHeaders(originalResponse *http.Response, proxyHostname, originHostname string, debug bool) http.Header {
 	newResponseHeaders := originalResponse.Header.Clone()
-	for k, v := range newResponseHeaders {
-		for i := range v {
-			newResponseHeaders[k][i] = strings.Replace(v[i], proxyHostname, originHostname, -1)
-		}
-	}
+	// 这一步不需要替换主机名了
+	// for k, v := range newResponseHeaders {
+	// 	for i := range v {
+	// 		newResponseHeaders[k][i] = strings.Replace(v[i], proxyHostname, originHostname, -1)
+	// 	}
+	// }
 	if debug {
 		newResponseHeaders.Del("content-security-policy")
 	}
@@ -152,8 +147,15 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	originHostname := url.Hostname()
 	proxyHostname := config.ProxyHostname
 
-	// 获取请求头中的IP和地区信息
-	clientIP := r.Header.Get("cf-connecting-ip")
+	// 获取真实的客户端 IP
+	clientIP, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		logError(r, "Error getting client IP: "+err.Error(), r.RemoteAddr)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	// 获取请求头中的地区信息
 	clientRegion := r.Header.Get("cf-ipcountry")
 
 	// 请求验证
@@ -161,12 +163,12 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		(config.PathnameRegex != "" && !regexp.MustCompile(config.PathnameRegex).MatchString(url.Path)) ||
 		(config.UAWhitelistRegex != "" && !regexp.MustCompile(config.UAWhitelistRegex).MatchString(strings.ToLower(r.Header.Get("user-agent")))) ||
 		(config.UABlacklistRegex != "" && regexp.MustCompile(config.UABlacklistRegex).MatchString(strings.ToLower(r.Header.Get("user-agent")))) ||
-		(clientIP != "" && config.IPWhitelistRegex != "" && !regexp.MustCompile(config.IPWhitelistRegex).MatchString(clientIP)) ||
-		(clientIP != "" && config.IPBlacklistRegex != "" && regexp.MustCompile(config.IPBlacklistRegex).MatchString(clientIP)) ||
+		(config.IPWhitelistRegex != "" && !regexp.MustCompile(config.IPWhitelistRegex).MatchString(clientIP)) ||
+		(config.IPBlacklistRegex != "" && regexp.MustCompile(config.IPBlacklistRegex).MatchString(clientIP)) ||
 		(clientRegion != "" && config.RegionWhitelistRegex != "" && !regexp.MustCompile(config.RegionWhitelistRegex).MatchString(clientRegion)) ||
 		(clientRegion != "" && config.RegionBlacklistRegex != "" && regexp.MustCompile(config.RegionBlacklistRegex).MatchString(clientRegion)) {
 
-		logError(r, "Invalid request")
+		logError(r, "Invalid request", clientIP)
 		if config.URL302 != "" {
 			http.Redirect(w, r, config.URL302, http.StatusFound)
 			return
@@ -181,16 +183,16 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	url.Host = proxyHostname
 	url.Scheme = config.ProxyProtocol
 
-	newRequest, err := createNewRequest(r, url.String(), proxyHostname, originHostname)
+	newRequest, err := createNewRequest(r, url.String(), proxyHostname)
 	if err != nil {
-		logError(r, "Create new request failed")
+		logError(r, "Create new request failed", clientIP)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 
 	originalResponse, err := http.DefaultClient.Do(newRequest)
 	if err != nil {
-		logError(r, "Fetch error: " + err.Error())
+		logError(r, "Fetch error: "+err.Error(), clientIP)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -208,14 +210,14 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	if strings.Contains(contentType, "text/") {
 		body, err = replaceResponseText(originalResponse, proxyHostname, config.PathnameRegex, originHostname)
 		if err != nil {
-			logError(r, "Replace response text error")
+			logError(r, "Replace response text error", clientIP)
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
 	} else {
 		bodyBytes, err := ioutil.ReadAll(originalResponse.Body)
 		if err != nil {
-			logError(r, "Read original response body error")
+			logError(r, "Read original response body error", clientIP)
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
