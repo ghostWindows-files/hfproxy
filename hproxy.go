@@ -15,17 +15,19 @@ import (
 
 // Config 结构体
 type Config struct {
-	ProxyHostname       string `json:"PROXY_HOSTNAME"`
-	ProxyProtocol       string `json:"PROXY_PROTOCOL"`
-	PathnameRegex       string `json:"PATHNAME_REGEX"`
-	UAWhitelistRegex    string `json:"UA_WHITELIST_REGEX"`
-	UABlacklistRegex    string `json:"UA_BLACKLIST_REGEX"`
-	IPWhitelistRegex    string `json:"IP_WHITELIST_REGEX"`
-	IPBlacklistRegex    string `json:"IP_BLACKLIST_REGEX"`
-	RegionWhitelistRegex string `json:"REGION_WHITELIST_REGEX"`
-	RegionBlacklistRegex string `json:"REGION_BLACKLIST_REGEX"`
-	URL302              string `json:"URL302"`
-	Debug               string `json:"DEBUG"`
+	ProxyHostname       string   `json:"PROXY_HOSTNAME"`
+	ProxyProtocol       string   `json:"PROXY_PROTOCOL"`
+	PathnameRegex       string   `json:"PATHNAME_REGEX"`
+	UAWhitelistRegex    string   `json:"UA_WHITELIST_REGEX"`
+	UABlacklistRegex    string   `json:"UA_BLACKLIST_REGEX"`
+	IPWhitelistRegex    string   `json:"IP_WHITELIST_REGEX"`
+	IPBlacklistRegex    string   `json:"IP_BLACKLIST_REGEX"`
+	IPWhitelist         []string `json:"IP_WHITELIST"`
+	IPBlacklist         []string `json:"IP_BLACKLIST"`
+	RegionWhitelistRegex string   `json:"REGION_WHITELIST_REGEX"`
+	RegionBlacklistRegex string   `json:"REGION_BLACKLIST_REGEX"`
+	URL302              string   `json:"URL302"`
+	Debug               string   `json:"DEBUG"`
 }
 
 // 读取 proxyconfig.json 文件配置
@@ -47,6 +49,9 @@ func loadConfig() Config {
 		config.UABlacklistRegex = os.Getenv("UA_BLACKLIST_REGEX")
 		config.IPWhitelistRegex = os.Getenv("IP_WHITELIST_REGEX")
 		config.IPBlacklistRegex = os.Getenv("IP_BLACKLIST_REGEX")
+		// 从 .env 文件加载 IP_WHITELIST 和 IP_BLACKLIST
+		config.IPWhitelist = parseIPList(os.Getenv("IP_WHITELIST"))
+		config.IPBlacklist = parseIPList(os.Getenv("IP_BLACKLIST"))
 		config.RegionWhitelistRegex = os.Getenv("REGION_WHITELIST_REGEX")
 		config.RegionBlacklistRegex = os.Getenv("REGION_BLACKLIST_REGEX")
 		config.URL302 = os.Getenv("URL302")
@@ -63,6 +68,25 @@ func loadConfig() Config {
 	}
 
 	return config
+}
+
+// 解析 IP 列表字符串
+func parseIPList(ipListStr string) []string {
+	if ipListStr == "" {
+		return nil
+	}
+
+	var ipList []string
+	parts := strings.Split(ipListStr, ",")
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if strings.HasPrefix(part, "[") && strings.HasSuffix(part, "]") {
+			ipList = append(ipList, strings.Trim(part, "[]")) // 去除方括号
+		} else {
+			ipList = append(ipList, part)
+		}
+	}
+	return ipList
 }
 
 func logError(r *http.Request, message string, clientIP string) {
@@ -141,6 +165,28 @@ func replaceResponseText(originalResponse *http.Response, proxyHostname, pathnam
 	return text, nil
 }
 
+// 检查 IP 是否在白名单或黑名单中
+func isIPAllowed(clientIP string, whitelist, blacklist []string) bool {
+	if whitelist != nil {
+		for _, ip := range whitelist {
+			if ip == clientIP {
+				return true
+			}
+		}
+		return false // 在白名单中找不到，则不允许
+	}
+
+	if blacklist != nil {
+		for _, ip := range blacklist {
+			if ip == clientIP {
+				return false
+			}
+		}
+	}
+
+	return true // 不在黑名单中，则允许
+}
+
 func handler(w http.ResponseWriter, r *http.Request) {
 	config := loadConfig()
 	url := r.URL
@@ -163,6 +209,8 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		(config.PathnameRegex != "" && !regexp.MustCompile(config.PathnameRegex).MatchString(url.Path)) ||
 		(config.UAWhitelistRegex != "" && !regexp.MustCompile(config.UAWhitelistRegex).MatchString(strings.ToLower(r.Header.Get("user-agent")))) ||
 		(config.UABlacklistRegex != "" && regexp.MustCompile(config.UABlacklistRegex).MatchString(strings.ToLower(r.Header.Get("user-agent")))) ||
+		// 优先检查新的 IP_WHITELIST 和 IP_BLACKLIST
+		!isIPAllowed(clientIP, config.IPWhitelist, config.IPBlacklist) ||
 		(config.IPWhitelistRegex != "" && !regexp.MustCompile(config.IPWhitelistRegex).MatchString(clientIP)) ||
 		(config.IPBlacklistRegex != "" && regexp.MustCompile(config.IPBlacklistRegex).MatchString(clientIP)) ||
 		(clientRegion != "" && config.RegionWhitelistRegex != "" && !regexp.MustCompile(config.RegionWhitelistRegex).MatchString(clientRegion)) ||
