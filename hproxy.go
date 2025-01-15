@@ -254,18 +254,42 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	clientRegion := r.Header.Get("cf-ipcountry")
 
 	// 请求验证
-	if proxyHostname == "" ||
-		(config.PathnameRegex != "" && !regexp.MustCompile(config.PathnameRegex).MatchString(url.Path)) ||
-		(config.UAWhitelistRegex != "" && !regexp.MustCompile(config.UAWhitelistRegex).MatchString(strings.ToLower(r.Header.Get("user-agent")))) ||
-		(config.UABlacklistRegex != "" && regexp.MustCompile(config.UABlacklistRegex).MatchString(strings.ToLower(r.Header.Get("user-agent")))) ||
-		// 使用新的 JSON 解析方式的 IP_WHITELIST 和 IP_BLACKLIST, 并支持 IPv6
-		!isIPAllowed(clientIP, config.IPWhitelist, config.IPBlacklist) ||
-		(config.IPWhitelistRegex != "" && !regexp.MustCompile(config.IPWhitelistRegex).MatchString(clientIP)) ||
-		(config.IPBlacklistRegex != "" && regexp.MustCompile(config.IPBlacklistRegex).MatchString(clientIP)) ||
-		(clientRegion != "" && config.RegionWhitelistRegex != "" && !regexp.MustCompile(config.RegionWhitelistRegex).MatchString(clientRegion)) ||
-		(clientRegion != "" && config.RegionBlacklistRegex != "" && !regexp.MustCompile(config.RegionBlacklistRegex).MatchString(clientRegion)) {
+	var triggeredRules []string
+	if proxyHostname == "" {
+		triggeredRules = append(triggeredRules, "PROXY_HOSTNAME is empty")
+	}
+	if config.PathnameRegex != "" && !regexp.MustCompile(config.PathnameRegex).MatchString(url.Path) {
+		triggeredRules = append(triggeredRules, "PATHNAME_REGEX mismatch: "+config.PathnameRegex)
+	}
+	if config.UAWhitelistRegex != "" && !regexp.MustCompile(config.UAWhitelistRegex).MatchString(strings.ToLower(r.Header.Get("user-agent"))) {
+		triggeredRules = append(triggeredRules, "UA_WHITELIST_REGEX mismatch: "+config.UAWhitelistRegex)
+	}
+	if config.UABlacklistRegex != "" && regexp.MustCompile(config.UABlacklistRegex).MatchString(strings.ToLower(r.Header.Get("user-agent"))) {
+		triggeredRules = append(triggeredRules, "UA_BLACKLIST_REGEX match: "+config.UABlacklistRegex)
+	}
+	if !isIPAllowed(clientIP, config.IPWhitelist, config.IPBlacklist) {
+		if len(config.IPWhitelist) > 0 {
+			triggeredRules = append(triggeredRules, "IP not in IP_WHITELIST")
+		}
+		if len(config.IPBlacklist) > 0 {
+			triggeredRules = append(triggeredRules, "IP in IP_BLACKLIST")
+		}
+	}
+	if config.IPWhitelistRegex != "" && !regexp.MustCompile(config.IPWhitelistRegex).MatchString(clientIP) {
+		triggeredRules = append(triggeredRules, "IP_WHITELIST_REGEX mismatch: "+config.IPWhitelistRegex)
+	}
+	if config.IPBlacklistRegex != "" && regexp.MustCompile(config.IPBlacklistRegex).MatchString(clientIP) {
+		triggeredRules = append(triggeredRules, "IP_BLACKLIST_REGEX match: "+config.IPBlacklistRegex)
+	}
+	if clientRegion != "" && config.RegionWhitelistRegex != "" && !regexp.MustCompile(config.RegionWhitelistRegex).MatchString(clientRegion) {
+		triggeredRules = append(triggeredRules, "REGION_WHITELIST_REGEX mismatch: "+config.RegionWhitelistRegex)
+	}
+	if clientRegion != "" && config.RegionBlacklistRegex != "" && regexp.MustCompile(config.RegionBlacklistRegex).MatchString(clientRegion) {
+		triggeredRules = append(triggeredRules, "REGION_BLACKLIST_REGEX match: "+config.RegionBlacklistRegex)
+	}
 
-		logError(r, "Invalid request", clientIP)
+	if len(triggeredRules) > 0 {
+		logError(r, "Invalid request, triggered rules: "+strings.Join(triggeredRules, ", "), clientIP)
 		if config.URL302 != "" {
 			http.Redirect(w, r, config.URL302, http.StatusFound)
 			return
