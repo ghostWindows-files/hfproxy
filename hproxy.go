@@ -15,19 +15,19 @@ import (
 
 // Config 结构体
 type Config struct {
-	ProxyHostname       string   `json:"PROXY_HOSTNAME"`
-	ProxyProtocol       string   `json:"PROXY_PROTOCOL"`
-	PathnameRegex       string   `json:"PATHNAME_REGEX"`
-	UAWhitelistRegex    string   `json:"UA_WHITELIST_REGEX"`
-	UABlacklistRegex    string   `json:"UA_BLACKLIST_REGEX"`
-	IPWhitelistRegex    string   `json:"IP_WHITELIST_REGEX"`
-	IPBlacklistRegex    string   `json:"IP_BLACKLIST_REGEX"`
+	ProxyHostname       string `json:"PROXY_HOSTNAME"`
+	ProxyProtocol       string `json:"PROXY_PROTOCOL"`
+	PathnameRegex       string `json:"PATHNAME_REGEX"`
+	UAWhitelistRegex    string `json:"UA_WHITELIST_REGEX"`
+	UABlacklistRegex    string `json:"UA_BLACKLIST_REGEX"`
+	IPWhitelistRegex    string `json:"IP_WHITELIST_REGEX"`
+	IPBlacklistRegex    string `json:"IP_BLACKLIST_REGEX"`
 	IPWhitelist         []string `json:"IP_WHITELIST"`
 	IPBlacklist         []string `json:"IP_BLACKLIST"`
-	RegionWhitelistRegex string   `json:"REGION_WHITELIST_REGEX"`
-	RegionBlacklistRegex string   `json:"REGION_BLACKLIST_REGEX"`
-	URL302              string   `json:"URL302"`
-	Debug               string   `json:"DEBUG"`
+	RegionWhitelistRegex string `json:"REGION_WHITELIST_REGEX"`
+	RegionBlacklistRegex string `json:"REGION_BLACKLIST_REGEX"`
+	URL302              string `json:"URL302"`
+	Debug               bool `json:"DEBUG"`
 }
 
 // 读取 proxyconfig.json 文件配置
@@ -55,7 +55,7 @@ func loadConfig() Config {
 		config.RegionWhitelistRegex = os.Getenv("REGION_WHITELIST_REGEX")
 		config.RegionBlacklistRegex = os.Getenv("REGION_BLACKLIST_REGEX")
 		config.URL302 = os.Getenv("URL302")
-		config.Debug = os.Getenv("DEBUG")
+		config.Debug = os.Getenv("DEBUG") == "true"
 	} else {
 		defer file.Close()
 
@@ -70,11 +70,14 @@ func loadConfig() Config {
 	return config
 }
 
-// 解析 IP 列表字符串
+// 解析 IP 列表字符串, 支持 (8.8.8.8,154.126.12.3,[2602:f8c0:5:1000:be24:11ff:fec7:51b6],[2602:f8c0:5:1000:ba56:11ff:fec7:51b6]) 格式
 func parseIPList(ipListStr string) []string {
-	if ipListStr == "" {
-		return nil
+	if ipListStr == "()" || ipListStr == "" {
+		return []string{} // 返回空切片
 	}
+
+	// 去除最外层的括号
+	ipListStr = strings.Trim(ipListStr, "()")
 
 	var ipList []string
 	parts := strings.Split(ipListStr, ",")
@@ -167,28 +170,44 @@ func replaceResponseText(originalResponse *http.Response, proxyHostname, pathnam
 
 // 检查 IP 是否在白名单或黑名单中
 func isIPAllowed(clientIP string, whitelist, blacklist []string) bool {
-	if whitelist != nil {
+	// 如果黑白名单都为空，则允许所有 IP
+	if len(whitelist) == 0 && len(blacklist) == 0 {
+		return true
+	}
+
+	// 检查白名单
+	if len(whitelist) > 0 {
 		for _, ip := range whitelist {
 			if ip == clientIP {
 				return true
 			}
 		}
-		return false // 在白名单中找不到，则不允许
+		return false // 不在白名单中，则不允许
 	}
 
-	if blacklist != nil {
+	// 检查黑名单
+	if len(blacklist) > 0 {
 		for _, ip := range blacklist {
 			if ip == clientIP {
 				return false
 			}
 		}
+		return true // 不在黑名单中，则允许
 	}
 
-	return true // 不在黑名单中，则允许
+	return true // 默认允许
 }
 
 func handler(w http.ResponseWriter, r *http.Request) {
 	config := loadConfig()
+
+	//debug模式下打印所有配置项
+	if config.Debug {
+		log.Println("All configurations:")
+		configJSON, _ := json.MarshalIndent(config, "", "  ")
+		log.Println(string(configJSON))
+	}
+
 	url := r.URL
 	originHostname := url.Hostname()
 	proxyHostname := config.ProxyHostname
@@ -246,7 +265,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer originalResponse.Body.Close()
 
-	newResponseHeaders := setResponseHeaders(originalResponse, proxyHostname, originHostname, config.Debug == "true")
+	newResponseHeaders := setResponseHeaders(originalResponse, proxyHostname, originHostname, config.Debug)
 	for k, v := range newResponseHeaders {
 		for _, v2 := range v {
 			w.Header().Add(k, v2)
