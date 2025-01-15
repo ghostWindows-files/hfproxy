@@ -255,6 +255,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 
 	// 请求验证
 	var triggeredRules []string
+
 	if proxyHostname == "" {
 		triggeredRules = append(triggeredRules, "PROXY_HOSTNAME is empty")
 	}
@@ -270,8 +271,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	if !isIPAllowed(clientIP, config.IPWhitelist, config.IPBlacklist) {
 		if len(config.IPWhitelist) > 0 {
 			triggeredRules = append(triggeredRules, "IP not in IP_WHITELIST")
-		}
-		if len(config.IPBlacklist) > 0 {
+		} else {
 			triggeredRules = append(triggeredRules, "IP in IP_BLACKLIST")
 		}
 	}
