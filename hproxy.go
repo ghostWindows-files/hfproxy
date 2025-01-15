@@ -88,7 +88,7 @@ func isFilteredHeader(key string) bool {
 	return false
 }
 
-func createNewRequest(r *http.Request, url, proxyHostname string) (*http.Request, error) {
+func createNewRequest(r *http.Request, url, proxyHostname, originHostname string) (*http.Request, error) {
 	newRequest, err := http.NewRequest(r.Method, url, r.Body)
 	if err != nil {
 		return nil, err
@@ -105,19 +105,24 @@ func createNewRequest(r *http.Request, url, proxyHostname string) (*http.Request
 		}
 	}
 	newRequest.Header = filteredHeaders
-	//newRequest.Host = proxyHostname // 不需要修改 Host 头部
+
+    // 替换请求头中的主机名
+    for k, v := range newRequest.Header {
+        for i := range v {
+            newRequest.Header[k][i] = strings.Replace(v[i], originHostname, proxyHostname, -1)
+        }
+    }
 
 	return newRequest, nil
 }
 
 func setResponseHeaders(originalResponse *http.Response, proxyHostname, originHostname string, debug bool) http.Header {
 	newResponseHeaders := originalResponse.Header.Clone()
-	// 这一步不需要替换主机名了
-	// for k, v := range newResponseHeaders {
-	// 	for i := range v {
-	// 		newResponseHeaders[k][i] = strings.Replace(v[i], proxyHostname, originHostname, -1)
-	// 	}
-	// }
+	for k, v := range newResponseHeaders {
+		for i := range v {
+			newResponseHeaders[k][i] = strings.Replace(v[i], proxyHostname, originHostname, -1)
+		}
+	}
 	if debug {
 		newResponseHeaders.Del("content-security-policy")
 	}
@@ -176,7 +181,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	url.Host = proxyHostname
 	url.Scheme = config.ProxyProtocol
 
-	newRequest, err := createNewRequest(r, url.String(), proxyHostname)
+	newRequest, err := createNewRequest(r, url.String(), proxyHostname, originHostname)
 	if err != nil {
 		logError(r, "Create new request failed")
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
