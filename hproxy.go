@@ -170,33 +170,37 @@ func replaceResponseText(originalResponse *http.Response, proxyHostname, pathnam
 
 // 检查 IP 是否在白名单或黑名单中
 func isIPAllowed(clientIP string, whitelist, blacklist []string) bool {
-	// 如果黑白名单都为空，则允许所有 IP
-	if len(whitelist) == 0 && len(blacklist) == 0 {
-		return true
-	}
+    // 如果黑白名单都为空，则允许所有 IP
+    if len(whitelist) == 0 && len(blacklist) == 0 {
+        return true
+    }
 
-	// 检查白名单
-	if len(whitelist) > 0 {
-		for _, ip := range whitelist {
-			if ip == clientIP {
-				return true
-			}
-		}
-		return false // 不在白名单中，则不允许
-	}
+    // 检查白名单
+    if len(whitelist) > 0 {
+        for _, ip := range whitelist {
+            if ip == clientIP {
+                return true
+            }
+        }
+    }
 
-	// 检查黑名单
-	if len(blacklist) > 0 {
-		for _, ip := range blacklist {
-			if ip == clientIP {
-				return false
-			}
-		}
-		return true // 不在黑名单中，则允许
-	}
+    // 检查黑名单
+    if len(blacklist) > 0 {
+        for _, ip := range blacklist {
+            if ip == clientIP {
+                return false
+            }
+        }
+    }
 
-	return true // 默认允许
+    // 如果存在白名单，并且IP不在白名单中，则拒绝
+    if len(whitelist) > 0 {
+        return false
+    }
+
+    return true // 默认允许
 }
+
 
 func handler(w http.ResponseWriter, r *http.Request) {
 	config := loadConfig()
