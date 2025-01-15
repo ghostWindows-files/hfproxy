@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"net"
@@ -15,19 +16,19 @@ import (
 
 // Config 结构体
 type Config struct {
-	ProxyHostname       string `json:"PROXY_HOSTNAME"`
-	ProxyProtocol       string `json:"PROXY_PROTOCOL"`
-	PathnameRegex       string `json:"PATHNAME_REGEX"`
-	UAWhitelistRegex    string `json:"UA_WHITELIST_REGEX"`
-	UABlacklistRegex    string `json:"UA_BLACKLIST_REGEX"`
-	IPWhitelistRegex    string `json:"IP_WHITELIST_REGEX"`
-	IPBlacklistRegex    string `json:"IP_BLACKLIST_REGEX"`
+	ProxyHostname       string   `json:"PROXY_HOSTNAME"`
+	ProxyProtocol       string   `json:"PROXY_PROTOCOL"`
+	PathnameRegex       string   `json:"PATHNAME_REGEX"`
+	UAWhitelistRegex    string   `json:"UA_WHITELIST_REGEX"`
+	UABlacklistRegex    string   `json:"UA_BLACKLIST_REGEX"`
+	IPWhitelistRegex    string   `json:"IP_WHITELIST_REGEX"`
+	IPBlacklistRegex    string   `json:"IP_BLACKLIST_REGEX"`
 	IPWhitelist         []string `json:"IP_WHITELIST"`
 	IPBlacklist         []string `json:"IP_BLACKLIST"`
-	RegionWhitelistRegex string `json:"REGION_WHITELIST_REGEX"`
-	RegionBlacklistRegex string `json:"REGION_BLACKLIST_REGEX"`
-	URL302              string `json:"URL302"`
-	Debug               bool `json:"DEBUG"`
+	RegionWhitelistRegex string   `json:"REGION_WHITELIST_REGEX"`
+	RegionBlacklistRegex string   `json:"REGION_BLACKLIST_REGEX"`
+	URL302              string   `json:"URL302"`
+	Debug               bool     `json:"DEBUG"`
 }
 
 // 读取 proxyconfig.json 文件配置
@@ -49,9 +50,9 @@ func loadConfig() Config {
 		config.UABlacklistRegex = os.Getenv("UA_BLACKLIST_REGEX")
 		config.IPWhitelistRegex = os.Getenv("IP_WHITELIST_REGEX")
 		config.IPBlacklistRegex = os.Getenv("IP_BLACKLIST_REGEX")
-		// 从 .env 文件加载 IP_WHITELIST 和 IP_BLACKLIST
-		config.IPWhitelist = parseIPList(os.Getenv("IP_WHITELIST"))
-		config.IPBlacklist = parseIPList(os.Getenv("IP_BLACKLIST"))
+		// 从 .env 文件加载 IP_WHITELIST 和 IP_BLACKLIST (JSON 格式)
+		config.IPWhitelist = parseIPListJSON(os.Getenv("IP_WHITELIST"))
+		config.IPBlacklist = parseIPListJSON(os.Getenv("IP_BLACKLIST"))
 		config.RegionWhitelistRegex = os.Getenv("REGION_WHITELIST_REGEX")
 		config.RegionBlacklistRegex = os.Getenv("REGION_BLACKLIST_REGEX")
 		config.URL302 = os.Getenv("URL302")
@@ -70,24 +71,17 @@ func loadConfig() Config {
 	return config
 }
 
-// 解析 IP 列表字符串, 支持 (8.8.8.8,154.126.12.3,[2602:f8c0:5:1000:be24:11ff:fec7:51b6],[2602:f8c0:5:1000:ba56:11ff:fec7:51b6]) 格式
-func parseIPList(ipListStr string) []string {
-	if ipListStr == "()" || ipListStr == "" {
+// 解析 IP 列表字符串 (JSON 格式)
+func parseIPListJSON(ipListStr string) []string {
+	if ipListStr == "" || ipListStr == "[]" || ipListStr == "()" {
 		return []string{} // 返回空切片
 	}
 
-	// 去除最外层的括号
-	ipListStr = strings.Trim(ipListStr, "()")
-
 	var ipList []string
-	parts := strings.Split(ipListStr, ",")
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if strings.HasPrefix(part, "[") && strings.HasSuffix(part, "]") {
-			ipList = append(ipList, strings.Trim(part, "[]")) // 去除方括号
-		} else {
-			ipList = append(ipList, part)
-		}
+	err := json.Unmarshal([]byte(ipListStr), &ipList)
+	if err != nil {
+		log.Printf("Error parsing IP list: %v", err)
+		return []string{} // 解析失败返回空切片
 	}
 	return ipList
 }
@@ -170,37 +164,36 @@ func replaceResponseText(originalResponse *http.Response, proxyHostname, pathnam
 
 // 检查 IP 是否在白名单或黑名单中
 func isIPAllowed(clientIP string, whitelist, blacklist []string) bool {
-    // 如果黑白名单都为空，则允许所有 IP
-    if len(whitelist) == 0 && len(blacklist) == 0 {
-        return true
-    }
+	// 如果黑白名单都为空，则允许所有 IP
+	if len(whitelist) == 0 && len(blacklist) == 0 {
+		return true
+	}
 
-    // 检查白名单
-    if len(whitelist) > 0 {
-        for _, ip := range whitelist {
-            if ip == clientIP {
-                return true
-            }
-        }
-    }
+	// 检查白名单
+	if len(whitelist) > 0 {
+		for _, ip := range whitelist {
+			if ip == clientIP {
+				return true
+			}
+		}
+	}
 
-    // 检查黑名单
-    if len(blacklist) > 0 {
-        for _, ip := range blacklist {
-            if ip == clientIP {
-                return false
-            }
-        }
-    }
+	// 检查黑名单
+	if len(blacklist) > 0 {
+		for _, ip := range blacklist {
+			if ip == clientIP {
+				return false
+			}
+		}
+	}
 
-    // 如果存在白名单，并且IP不在白名单中，则拒绝
-    if len(whitelist) > 0 {
-        return false
-    }
+	// 如果存在白名单，并且IP不在白名单中，则拒绝
+	if len(whitelist) > 0 {
+		return false
+	}
 
-    return true // 默认允许
+	return true // 默认允许
 }
-
 
 func handler(w http.ResponseWriter, r *http.Request) {
 	config := loadConfig()
@@ -232,12 +225,12 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		(config.PathnameRegex != "" && !regexp.MustCompile(config.PathnameRegex).MatchString(url.Path)) ||
 		(config.UAWhitelistRegex != "" && !regexp.MustCompile(config.UAWhitelistRegex).MatchString(strings.ToLower(r.Header.Get("user-agent")))) ||
 		(config.UABlacklistRegex != "" && regexp.MustCompile(config.UABlacklistRegex).MatchString(strings.ToLower(r.Header.Get("user-agent")))) ||
-		// 优先检查新的 IP_WHITELIST 和 IP_BLACKLIST
+		// 使用新的 JSON 解析方式的 IP_WHITELIST 和 IP_BLACKLIST
 		!isIPAllowed(clientIP, config.IPWhitelist, config.IPBlacklist) ||
 		(config.IPWhitelistRegex != "" && !regexp.MustCompile(config.IPWhitelistRegex).MatchString(clientIP)) ||
 		(config.IPBlacklistRegex != "" && regexp.MustCompile(config.IPBlacklistRegex).MatchString(clientIP)) ||
 		(clientRegion != "" && config.RegionWhitelistRegex != "" && !regexp.MustCompile(config.RegionWhitelistRegex).MatchString(clientRegion)) ||
-		(clientRegion != "" && config.RegionBlacklistRegex != "" && regexp.MustCompile(config.RegionBlacklistRegex).MatchString(clientRegion)) {
+		(clientRegion != "" && config.RegionBlacklistRegex != "" && !regexp.MustCompile(config.RegionBlacklistRegex).MatchString(clientRegion)) {
 
 		logError(r, "Invalid request", clientIP)
 		if config.URL302 != "" {
@@ -326,6 +319,13 @@ Commercial support is available at
 }
 
 func main() {
+	// 预先加载配置并打印
+	config := loadConfig()
+	configJSON, _ := json.MarshalIndent(config, "", "  ")
+	fmt.Println("Loaded configurations:")
+	fmt.Println(string(configJSON))
+
 	http.HandleFunc("/", handler)
+	log.Println("Starting server on :5213")
 	log.Fatal(http.ListenAndServe(":5213", nil))
 }
