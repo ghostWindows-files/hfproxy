@@ -162,27 +162,60 @@ func replaceResponseText(originalResponse *http.Response, proxyHostname, pathnam
 	return text, nil
 }
 
-// 检查 IP 是否在白名单或黑名单中
+// 检查 IP 是否在白名单或黑名单中 (支持 IPv6)
 func isIPAllowed(clientIP string, whitelist, blacklist []string) bool {
 	// 如果黑白名单都为空，则允许所有 IP
 	if len(whitelist) == 0 && len(blacklist) == 0 {
 		return true
 	}
 
+	// 将客户端 IP 转换为 net.IP 类型
+	clientIPAddr := net.ParseIP(clientIP)
+	if clientIPAddr == nil {
+		log.Printf("Invalid client IP: %s", clientIP)
+		return false // 如果 IP 地址无效，则拒绝
+	}
+
 	// 检查白名单
 	if len(whitelist) > 0 {
-		for _, ip := range whitelist {
-			if ip == clientIP {
-				return true
+		for _, ipStr := range whitelist {
+			_, ipNet, err := net.ParseCIDR(ipStr)
+			if err != nil {
+				// 如果不是 CIDR 格式，则尝试解析为单个 IP
+				ip := net.ParseIP(ipStr)
+				if ip == nil {
+					log.Printf("Invalid IP or CIDR in whitelist: %s", ipStr)
+					continue
+				}
+				if clientIPAddr.Equal(ip) {
+					return true
+				}
+			} else {
+				if ipNet.Contains(clientIPAddr) {
+					return true
+				}
 			}
 		}
 	}
 
 	// 检查黑名单
 	if len(blacklist) > 0 {
-		for _, ip := range blacklist {
-			if ip == clientIP {
-				return false
+		for _, ipStr := range blacklist {
+			_, ipNet, err := net.ParseCIDR(ipStr)
+			if err != nil {
+				// 如果不是 CIDR 格式，则尝试解析为单个 IP
+				ip := net.ParseIP(ipStr)
+				if ip == nil {
+					log.Printf("Invalid IP or CIDR in blacklist: %s", ipStr)
+					continue
+				}
+				if clientIPAddr.Equal(ip) {
+					return false
+				}
+			} else {
+				if ipNet.Contains(clientIPAddr) {
+					return false
+				}
 			}
 		}
 	}
@@ -225,7 +258,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		(config.PathnameRegex != "" && !regexp.MustCompile(config.PathnameRegex).MatchString(url.Path)) ||
 		(config.UAWhitelistRegex != "" && !regexp.MustCompile(config.UAWhitelistRegex).MatchString(strings.ToLower(r.Header.Get("user-agent")))) ||
 		(config.UABlacklistRegex != "" && regexp.MustCompile(config.UABlacklistRegex).MatchString(strings.ToLower(r.Header.Get("user-agent")))) ||
-		// 使用新的 JSON 解析方式的 IP_WHITELIST 和 IP_BLACKLIST
+		// 使用新的 JSON 解析方式的 IP_WHITELIST 和 IP_BLACKLIST, 并支持 IPv6
 		!isIPAllowed(clientIP, config.IPWhitelist, config.IPBlacklist) ||
 		(config.IPWhitelistRegex != "" && !regexp.MustCompile(config.IPWhitelistRegex).MatchString(clientIP)) ||
 		(config.IPBlacklistRegex != "" && regexp.MustCompile(config.IPBlacklistRegex).MatchString(clientIP)) ||
@@ -242,6 +275,10 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(nginx()))
 		return
 	}
+
+	// 允许访问，输出客户端 IP 和请求 URL
+	userAgent := r.Header.Get("user-agent")
+	log.Printf("Allowed request, clientIp: %s, user-agent: %s, url: %s", clientIP, userAgent, url.String())
 
 	// 设置目标 URL 的主机和协议
 	url.Host = proxyHostname
