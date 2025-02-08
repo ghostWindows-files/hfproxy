@@ -24,7 +24,7 @@ jobs:
         GOOS=linux GOARCH=amd64 go build -o build/hproxy hproxy.go
 
     - name: Upload Binary
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: hproxy-linux-amd64
         path: build/hproxy
